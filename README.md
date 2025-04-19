@@ -44,33 +44,26 @@ Dự án này tập trung vào việc tích hợp **RFID PN532** với **ESP32-S
 | **SS**   | **GPIO5**  | Chip Select |  
 
 ## 📂 Cấu trúc thư mục  
-
-PlatformIO_ESP32-S3 DevkitC1-N16R8_Platform/
-│── .vscode/            # Cấu hình VS Code
-│── include/            # Header files (PN532Reader.h, config.h)
-│── lib/                # Thư viện tùy chỉnh
-│── src/                # Mã nguồn chính (PN532Reader.cpp)
-│── test/               # Kiểm thử
-│── platformio.ini      # Cấu hình PlatformIO
-│── project_config.h    # Cấu hình dự án
-
-Có vẻ như bạn cần chỉnh sửa một chút để đảm bảo đúng định dạng Markdown. Tôi thấy có một số khoảng cách thừa và thiếu dấu kết thúc trong phần khối mã. Dưới đây là phiên bản chuẩn hơn:
+PlatformIO_ESP32-S3 DevkitC1-N16R8_Platform/  
+│── .vscode/            # Cấu hình VS Code  
+│── include/            # Header files (PN532Reader.h, config.h)  
+│── lib/                # Thư viện tùy chỉnh  
+│── src/                # Mã nguồn chính (PN532Reader.cpp)  
+│── test/               # Kiểm thử  
+│── platformio.ini      # Cấu hình PlatformIO  
+│── project_config.h    # Cấu hình dự án  
 
 ## 🔧 Cách sử dụng  
 
-**Biên dịch và tải chương trình lên ESP32-S3:**  
+Biên dịch và tải chương trình lên ESP32-S3:  
 ```bash
-pio run --target upload
+pio run --target upload '''
 
-
-**Giám sát Serial để kiểm tra dữ liệu RFID:**
+Giám sát Serial để kiểm tra dữ liệu RFID:
 '''bash
-pio device monitor
+pio device monitor '''
 
 
-**📜 Ghi chú**
+## 📜 Ghi chú
 Dự án này tập trung vào việc tích hợp RFID PN532 với ESP32-S3 bằng PlatformIO.
-Nếu bạn muốn mở rộng tính năng, hãy đảm bảo tuân theo cấu trúc thư mục hiện có.
- 
-
-
+Nếu bạn muốn mở rộng tính năng, hãy đảm bảo tuân theo cấu trúc thư mục hiện có
