@@ -16,7 +16,6 @@ Dự án này tập trung vào việc tích hợp **RFID PN532** với **ESP32-S
    git clone https://github.com/Lena-user/PlatformIO_ESP32_S3_DevkitC1-N16R8_Platform.git  
    cd PlatformIO_ESP32_S3_DevkitC1-N16R8_Platform  
 
-
 - Cài đặt PlatformIO (nếu chưa có):- Hướng dẫn cài đặt PlatformIO
 - Hoặc dùng lệnh để cài đặt trên VS Code:code --install-extension platformio.platformio-ide  
 
@@ -24,25 +23,25 @@ Dự án này tập trung vào việc tích hợp **RFID PN532** với **ESP32-S
 - Mở dự án với VS Code:- Mở VS Code và chọn File > Open Folder.
 - Chọn thư mục PlatformIO_ESP32_S3_DevkitC1-N16R8_Platform.
 
+## 🔗 Kết nối ESP32-S3 với RFID PN532  
 
-🔗 Kết nối ESP32-S3 với RFID PN532
-🟢 I2C (Khuyến nghị)
-| Chân PN532 | Chân ESP32-S3 | Chức năng | 
-| VCC | 3.3V | Nguồn | 
-| GND | GND | Mass | 
-| SDA | GPIO14 | Dữ liệu I2C | 
-| SCL | GPIO13 | Clock I2C | 
+### 🟢 I2C (Khuyến nghị)  
+| Chân PN532 | Chân ESP32-S3 | Chức năng |  
+|-----------|-------------|------------|  
+| **VCC**  | **3.3V**   | Nguồn      |  
+| **GND**  | **GND**    | Mass       |  
+| **SDA**  | **GPIO14** | Dữ liệu I2C |  
+| **SCL**  | **GPIO13** | Clock I2C  |  
 
-
-🔵 SPI
-| Chân PN532 | Chân ESP32-S3 | Chức năng | 
-| VCC | 3.3V | Nguồn | 
-| GND | GND | Mass | 
-| SCK | GPIO18 | Clock SPI | 
-| MOSI | GPIO23 | Dữ liệu gửi | 
-| MISO | GPIO19 | Dữ liệu nhận | 
-| SS | GPIO5 | Chip Select | 
-
+### 🔵 SPI  
+| Chân PN532 | Chân ESP32-S3 | Chức năng |  
+|-----------|-------------|------------|  
+| **VCC**  | **3.3V**   | Nguồn      |  
+| **GND**  | **GND**    | Mass       |  
+| **SCK**  | **GPIO18** | Clock SPI  |  
+| **MOSI** | **GPIO23** | Dữ liệu gửi |  
+| **MISO** | **GPIO19** | Dữ liệu nhận |  
+| **SS**   | **GPIO5**  | Chip Select |  
 
 📂 Cấu trúc thư mục
 PlatformIO_ESP32-S3_DevkitC1-N16R8_Platform/  
