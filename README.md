@@ -15,11 +15,10 @@ Dự án này tập trung vào việc tích hợp **RFID PN532** với **ESP32-S
    ```bash  
    git clone https://github.com/Lena-user/PlatformIO_ESP32_S3_DevkitC1-N16R8_Platform.git  
    cd PlatformIO_ESP32_S3_DevkitC1-N16R8_Platform  
-
 - Cài đặt PlatformIO (nếu chưa có):- Hướng dẫn cài đặt PlatformIO
-- Hoặc dùng lệnh để cài đặt trên VS Code:code --install-extension platformio.platformio-ide  
-
-
+- Hoặc dùng lệnh để cài đặt trên VS Code:
+    ```bash
+    code --install-extension platformio.platformio-ide  
 - Mở dự án với VS Code:- Mở VS Code và chọn File > Open Folder.
 - Chọn thư mục PlatformIO_ESP32_S3_DevkitC1-N16R8_Platform.
 
@@ -54,16 +53,13 @@ PlatformIO_ESP32-S3 DevkitC1-N16R8_Platform/
 │── project_config.h    # Cấu hình dự án  
 
 ## 🔧 Cách sử dụng  
-
-Biên dịch và tải chương trình lên ESP32-S3:  
-```bash
-pio run --target upload '''
-
-Giám sát Serial để kiểm tra dữ liệu RFID:
-'''bash
-pio device monitor '''
-
-
+- Biên dịch và tải chương trình lên ESP32-S3:  
+    ```bash
+    pio run --target upload 
+- Giám sát Serial để kiểm tra dữ liệu RFID:
+    ```bash
+    pio device monitor
 ## 📜 Ghi chú
 Dự án này tập trung vào việc tích hợp RFID PN532 với ESP32-S3 bằng PlatformIO.
 Nếu bạn muốn mở rộng tính năng, hãy đảm bảo tuân theo cấu trúc thư mục hiện có
+
