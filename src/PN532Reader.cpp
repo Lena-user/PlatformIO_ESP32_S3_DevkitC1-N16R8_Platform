@@ -15,7 +15,7 @@ void PN532Reader::begin()
 
 // Quét thẻ NFC
 // uid[]: Mảng chứa UID của thẻ
-// uidLength: Kích thước UID
+// uidLength: Kích  thước UID
 // Trả về true nếu quét thành công, false nếu không có thẻ nào được quét    
 bool PN532Reader::scanCard(uint8_t *uid, uint8_t &uidLength)
 {
@@ -147,3 +147,4 @@ std::string PN532Reader::readBlockAsString(uint8_t block)
     }
     return result;
 }
+

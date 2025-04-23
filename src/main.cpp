@@ -1,56 +1,99 @@
-#include "main.h"
+#include <Wire.h>
+#include <Adafruit_PN532.h>
 
-PN532Reader nfcReader(SDA_PIN, SCL_PIN); // Khởi tạo PN532 với SDA = GPIO14, SCL = GPIO13
+// Chân kết nối PN532 qua I2C
+#define SDA_PIN 14
+#define SCL_PIN 13
 
-void ScanTask(void *pvParameters)
-{
-    Serial.println("Waiting for NFC card... ");
-    uint8_t uid[7];        // Mảng chứa UID của thẻ
-    uint8_t uidLength = 0; // Kích thước UID
-    if (nfcReader.scanCard(uid, uidLength))
-    {                                                          // Quét thẻ NFC
-        nfcReader.printUID(uid, uidLength);                    // In UID của thẻ ra Serial Monitor
-        uint8_t key[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // Key A (6 byte)
-        uint8_t block = 4;                                     // Block cần ghi (0-15)
-        if (nfcReader.authenticateBlock(block, key, uid, uidLength))
-        { // Xác thực block với key A
-            
-            Serial.println("Authentication successful!");
-            vTaskDelay(portTICK_PERIOD_MS);
-            xTaskCreate(ReadTask, "ReadTask", 4096, NULL, 1, &ReadTaskHandle); // Tạo task đọc thẻ NFC
+// Khởi tạo module NFC
+Adafruit_PN532 nfc(SDA_PIN, SCL_PIN);
+
+// FreeRTOS
+TaskHandle_t readTaskHandle;
+TaskHandle_t writeTaskHandle;
+QueueHandle_t writeQueue;
+
+// Biến toàn cục để lưu dữ liệu quét
+uint8_t uid[7] = {0};
+uint8_t uidLength = 0;
+uint8_t blockData[16] = {0};
+uint8_t keyA[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+// Hàm đọc thẻ NFC (chạy nền)
+void readTask(void *pvParameters) {
+    while (true) {
+        if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength)) {
+            Serial.print("📌 Thẻ NFC được phát hiện! UID: ");
+            for (uint8_t i = 0; i < uidLength; i++) {
+                Serial.printf("%02X ", uid[i]);
+            }
+            Serial.println("");
+
+            if (nfc.mifareclassic_AuthenticateBlock(uid, uidLength, 4, 0, keyA)) {
+                Serial.println("✅ Block 4 đã được xác thực.");
+
+                if (nfc.mifareclassic_ReadDataBlock(4, blockData)) {
+                    Serial.print("📖 Dữ liệu Block 4: ");
+                    for (int i = 0; i < 16; i++) {
+                        Serial.printf("%c", blockData[i]);
+                    }
+                    Serial.println("");
+                } else {
+                    Serial.println("❌ Không thể đọc dữ liệu từ block.");
+                }
+            } else {
+                Serial.println("❌ Xác thực block thất bại.");
+            }
         }
-        else
-        {
-            Serial.println("Authentication failed!");
+        vTaskDelay(pdMS_TO_TICKS(500));  // Quét mỗi 500ms
+    }
+}
+
+// Hàm ghi dữ liệu NFC (chạy khi có yêu cầu)
+void writeTask(void *pvParameters) {
+    uint8_t data[16];
+
+    while (true) {
+        if (xQueueReceive(writeQueue, &data, portMAX_DELAY)) {
+            if (nfc.mifareclassic_WriteDataBlock(4, data)) {
+                Serial.println("✅ Dữ liệu đã ghi vào thẻ NFC!");
+            } else {
+                Serial.println("❌ Ghi thất bại!");
+            }
         }
     }
-    vTaskDelete(ScanTaskHandle); // Xóa task sau khi hoàn thành
 }
 
-void ReadTask(void *pvParameters)
-{
-    uint8_t block = 4; // Block cần đọc (0-15)
-    std::string data = nfcReader.readBlockAsString(block); // Đọc dữ liệu từ block
-    Serial.print("Data from block: ");
-    Serial.println(data.c_str()); // In dữ liệu ra Serial Monitor
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-    xTaskCreate(ScanTask, "ScanTask", 4096, NULL, 1, &ScanTaskHandle); // Tạo lại task quét thẻ NFC
-    vTaskDelete(ReadTaskHandle); // Xóa task sau khi hoàn thành
+// Hàm yêu cầu ghi dữ liệu từ Serial Monitor
+void requestWriteFromSerial() {
+    if (Serial.available()) {
+        char inputData[16]; // Dữ liệu ghi (16 byte)
+        memset(inputData, 0, 16); // Xóa dữ liệu cũ
+
+        Serial.readBytes(inputData, 16); // Đọc chuỗi từ Serial
+        xQueueSend(writeQueue, inputData, portMAX_DELAY); // Gửi vào Queue
+
+        Serial.print("📥 Đã nhận yêu cầu ghi: ");
+        Serial.println(inputData);
+    }
 }
 
-void setup()
-{
+// Khởi động hệ thống
+void setup() {
     Serial.begin(115200);
-    nfcReader.begin(); // Khởi động PN532
-    xTaskCreate(wifiTask, "WiFiTask", 4096, NULL, 1, &WiFiTaskHandle);
-    // xTaskCreate(SeverTask, "SeverTask", 4096, NULL, 1, &SeverTaskHandle);
-    // xTaskCreate(scanTask, "ScanTask", 4096, NULL, 1, &ScanTaskHandle);
-    // xTaskCreate(readTask, "ReadTask", 4096, NULL, 1, &ReadTaskHandle);
-    // vTaskSuspend(SeverTaskHandle); // Tạm dừng task SeverTask
-    // vTaskSuspend(ScanTaskHandle);  // Tạm dừng task ScanTask
+    Wire.begin(SDA_PIN, SCL_PIN);
+    
+    nfc.begin();
+    nfc.SAMConfig();
+    Serial.println("PN532 Ready!");
+
+    writeQueue = xQueueCreate(10, sizeof(uint8_t[16]));
+
+    xTaskCreatePinnedToCore(readTask, "ReadTask", 4096, NULL, 1, &readTaskHandle, 1);
+    xTaskCreatePinnedToCore(writeTask, "WriteTask", 4096, NULL, 1, &writeTaskHandle, 0);
 }
 
-void loop()
-{
-
+void loop() {
+    requestWriteFromSerial(); // Kiểm tra nếu có yêu cầu ghi từ Serial
+    delay(100);  // Tránh tiêu tốn CPU quá mức
 }
