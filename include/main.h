@@ -16,11 +16,11 @@
 #include <Server_Side_RPC.h>     // Thư viện cho server-side RPC
 
 // Thư viện FreeRTOS
-#include <array> // Thư viện array
+#include <array>               // Thư viện array
 #include "freertos/FreeRTOS.h" // Thư viện FreeRTOS
-#include "freertos/task.h"    // Thư viện FreeRTOS task
-#include "freertos/queue.h"   // Thư viện FreeRTOS queue
-#include "freertos/semphr.h" // Thư viện FreeRTOS semaphore
+#include "freertos/task.h"     // Thư viện FreeRTOS task
+#include "freertos/queue.h"    // Thư viện FreeRTOS queue
+#include "freertos/semphr.h"   // Thư viện FreeRTOS semaphore
 
 // Initialize the WiFi and MQTT client
 WiFiClient wifiClient;
@@ -39,13 +39,23 @@ ThingsBoard tb(
 
 // Task handles
 TaskHandle_t SeverTaskHandle = NULL; // Handle cho task server
-TaskHandle_t WiFiTaskHandle = NULL;   // Handle cho task Wi-Fi
-TaskHandle_t ReadTaskHandle = NULL;   // Handle cho task đọc NFC
+TaskHandle_t WiFiTaskHandle = NULL;  // Handle cho task Wi-Fi
+TaskHandle_t ScanTaskHandle = NULL;  // Handle cho task đọc NFC
+TaskHandle_t ReadTaskHandle = NULL;  // Handle cho task đọc NFC
+
+void ScanTask(void *pvParameters);
+void ReadTask(void *pvParameters);
 
 void CheckInnProcess(const JsonVariantConst &data, JsonDocument &response)
 {
     // Xử lý dữ liệu từ RPC
     Serial.println("Processing CheckInn RPC...");
+    std::string request = data[RPC_CALLBACK.at("KEYS")[0].c_str()];
+    std::string room = data[RPC_CALLBACK.at("KEYS")[1].c_str()];
+
+    Serial.print(request.c_str());
+    Serial.print(" - ");        
+    Serial.println(room.c_str()); // In dữ liệu ra Serial Monitor 
 }
 
 void wifiTask(void *pvParameters)
@@ -58,10 +68,7 @@ void wifiTask(void *pvParameters)
         Serial.print(".");
     }
     Serial.println("Connected to WiFi");
-    if (SeverTaskHandle != NULL)
-    {
-        vTaskResume(SeverTaskHandle); // Resume the server task after Wi-Fi is connected
-    }
+    xTaskCreate(ScanTask, "ScanTask", 4096, NULL, 1, &ScanTaskHandle); // Tạo task quét thẻ NFC
     vTaskDelete(WiFiTaskHandle); // Xóa task Wi-Fi sau khi hoàn thành
 }
 void SeverTask(void *pvParameters)
@@ -74,10 +81,6 @@ void SeverTask(void *pvParameters)
             vTaskDelay(1000 / portTICK_PERIOD_MS);
             Serial.println("Failed to reconnect");
         }
-    }
-    else
-    {
-        Serial.println("Connected to ThingsBoard");
     }
     if (!subscribed)
     {
@@ -93,9 +96,8 @@ void SeverTask(void *pvParameters)
         Serial.println("Subscribe done");
         subscribed = true;
     }
-    vTaskDelete(SeverTaskHandle); // Xóa task server sau khi hoàn thành
+    vTaskResume(ScanTaskHandle); // Resume the scan task after server task is ready
 }
-
 
 extern PN532Reader nfcReader; // Khai báo đối tượng PN532Reader
 
