@@ -55,6 +55,7 @@ void writeTask(void *pvParameters) {
 
     while (true) {
         if (xQueueReceive(writeQueue, &data, portMAX_DELAY)) {
+            delay(500); // Đợi một chút trước khi ghi dữ liệu
             if (nfc.mifareclassic_WriteDataBlock(4, data)) {
                 Serial.println("✅ Dữ liệu đã ghi vào thẻ NFC!");
             } else {
