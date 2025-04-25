@@ -6,14 +6,13 @@
 #include <sstream> // Thư viện stringstream
 
 // Private Include
-#include "PN532Reader.h" // Thư viện PN532
+#include "PN532Manager.h" // Thư viện PN532
 #include "config.h"      // Thư viện cấu hình
 
 // Thư viện liên quan đến kết nối mạng và ThingsBoard
 #include <WiFi.h>
-#include <ThingsBoard.h>         // Thư viện ThingsBoard cho ESP32
-#include <Arduino_MQTT_Client.h> // Thư viện MQTT cho ESP32
-#include <Server_Side_RPC.h>     // Thư viện cho server-side RPC
+#include <Adafruit_MQTT.h> // Thư viện Adafruit MQTT
+#include <Adafruit_MQTT_Client.h> // Thư viện Adafruit MQTT Client
 
 // Thư viện FreeRTOS
 #include <array>               // Thư viện array
@@ -24,41 +23,23 @@
 
 // Initialize the WiFi and MQTT client
 WiFiClient wifiClient;
-Arduino_MQTT_Client mqttClient(wifiClient);
-Server_Side_RPC<MAX_RPC_SUBSCRIPTIONS, MAX_RPC_RESPONSE> rpc;
-const std::array<IAPI_Implementation *, 1U> apis = {
-    &rpc};
+Adafruit_MQTT_Client mqtt(&wifiClient, IO_SERVER, IO_PORT, IO_USERNAME, IO_KEY);
+Adafruit_MQTT_Subscribe subscribe(&mqtt, IO_FEEDS); // Subscribe to ThingsBoard
+Adafruit_MQTT_Publish publish(&mqtt, IO_FEEDS); // Publish to ThingsBoard
 
 // Initialize ThingsBoard instance with the maximum needed buffer size
-ThingsBoard tb(
-    mqttClient,
-    MAX_MESSAGE_RECEIVE_SIZE,
-    MAX_MESSAGE_SEND_SIZE,
-    Default_Max_Stack_Size,
-    apis);
 
 // Task handles
-TaskHandle_t SeverTaskHandle = NULL; // Handle cho task server
+TaskHandle_t ServerTaskHandle = NULL; // Handle cho task server
 TaskHandle_t WiFiTaskHandle = NULL;  // Handle cho task Wi-Fi
-TaskHandle_t ScanTaskHandle = NULL;  // Handle cho task đọc NFC
-TaskHandle_t ReadTaskHandle = NULL;  // Handle cho task đọc NFC
+TaskHandle_t readTaskHandle;
+TaskHandle_t writeTaskHandle;
 
-void ScanTask(void *pvParameters);
-void ReadTask(void *pvParameters);
 
-void CheckInnProcess(const JsonVariantConst &data, JsonDocument &response)
-{
-    // Xử lý dữ liệu từ RPC
-    Serial.println("Processing CheckInn RPC...");
-    std::string request = data[RPC_CALLBACK.at("KEYS")[0].c_str()];
-    std::string room = data[RPC_CALLBACK.at("KEYS")[1].c_str()];
+void writeTask(void *pvParameters);
+void readTask(void *pvParameters);
 
-    Serial.print(request.c_str());
-    Serial.print(" - ");        
-    Serial.println(room.c_str()); // In dữ liệu ra Serial Monitor 
-}
-
-void wifiTask(void *pvParameters)
+void WiFiTask(void *pvParameters)
 {
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     Serial.println("Connecting to WiFi...");
@@ -68,37 +49,34 @@ void wifiTask(void *pvParameters)
         Serial.print(".");
     }
     Serial.println("Connected to WiFi");
-    xTaskCreate(ScanTask, "ScanTask", 4096, NULL, 1, &ScanTaskHandle); // Tạo task quét thẻ NFC
+    vTaskResume(ServerTaskHandle); // Resume task server sau khi kết nối Wi-Fi thành công
     vTaskDelete(WiFiTaskHandle); // Xóa task Wi-Fi sau khi hoàn thành
 }
-void SeverTask(void *pvParameters)
-{
-    if (!tb.connected())
-    {
-        Serial.println("Reconnecting to ThingsBoard...");
-        while (!tb.connect(THINGSBOARD_SERVER, DEVICE_ACCESS_TOKEN, THINGSBOARD_PORT))
-        {
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-            Serial.println("Failed to reconnect");
-        }
-    }
-    if (!subscribed)
-    {
-        Serial.println("Subscribing for RPC...");
-        const std::array<RPC_Callback, MAX_RPC_SUBSCRIPTIONS> callbacks = {
-            RPC_Callback{RPC_CALLBACK.at("METHODS")[0].c_str(), CheckInnProcess}};
-        if (!rpc.RPC_Subscribe(callbacks.cbegin(), callbacks.cend()))
-        {
-            Serial.println("Failed to subscribe for RPC");
-            return;
+void SeverTask(void *pvParameters) {
+    while (true) { // Duy trì Task
+        if (!mqtt.connected()) {
+            Serial.println("⚠️ MQTT bị ngắt, đang thử kết nối lại...");
+            uint8_t retries = 3;
+            while (retries > 0 && !mqtt.connect()) {
+                Serial.println("🔄 Đang thử lại...");
+                vTaskDelay(pdMS_TO_TICKS(5000)); // Đợi 5 giây trước khi thử lại
+                retries--;
+            }
+            if (mqtt.connected()) {
+                Serial.println("✅ Đã kết nối lại MQTT!");
+            } else {
+                Serial.println("🚫 Không thể kết nối lại MQTT.");
+                vTaskDelay(pdMS_TO_TICKS(10000)); // Chờ 10 giây rồi thử lại
+                continue; // Quay lại vòng lặp để thử lại
+            }
         }
 
-        Serial.println("Subscribe done");
-        subscribed = true;
+        Serial.println("🌐 Đã kết nối MQTT - Khởi động Tasks");
+        xTaskCreatePinnedToCore(readTask, "ReadTask", 4096, NULL, 1, &readTaskHandle, 0);
+        xTaskCreatePinnedToCore(writeTask, "WriteTask", 4096, NULL, 1, &writeTaskHandle, 0);
+
+        vTaskDelete(NULL); // Xóa chính task này khi hoàn thành
     }
-    vTaskResume(ScanTaskHandle); // Resume the scan task after server task is ready
 }
-
-extern PN532Reader nfcReader; // Khai báo đối tượng PN532Reader
 
 #endif // MAIN_H
