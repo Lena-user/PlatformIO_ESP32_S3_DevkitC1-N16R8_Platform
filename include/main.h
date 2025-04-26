@@ -6,8 +6,8 @@
 #include <sstream> // Thư viện stringstream
 
 // Private Include
-#include "PN532Reader.h" // Thư viện PN532
 #include "config.h"      // Thư viện cấu hình
+#include "Adafruit_PN532.h" // Thư viện NFC PN532
 
 // Thư viện liên quan đến kết nối mạng và ThingsBoard
 #include <WiFi.h>
@@ -38,27 +38,17 @@ ThingsBoard tb(
     apis);
 
 // Task handles
-TaskHandle_t SeverTaskHandle = NULL; // Handle cho task server
+TaskHandle_t ServerTaskHandle = NULL; // Handle cho task server
 TaskHandle_t WiFiTaskHandle = NULL;  // Handle cho task Wi-Fi
-TaskHandle_t ScanTaskHandle = NULL;  // Handle cho task đọc NFC
-TaskHandle_t ReadTaskHandle = NULL;  // Handle cho task đọc NFC
+TaskHandle_t readTaskHandle = NULL;  // Handle cho task đọc NFC
+TaskHandle_t writeTaskHandle = NULL; // Handle cho task ghi NFC
 
-void ScanTask(void *pvParameters);
-void ReadTask(void *pvParameters);
+void CheckInnProcess(const JsonVariantConst &data, JsonDocument &response);
+void readTask(void *pvParameters);
+void writeTask(void *pvParameters);
 
-void CheckInnProcess(const JsonVariantConst &data, JsonDocument &response)
-{
-    // Xử lý dữ liệu từ RPC
-    Serial.println("Processing CheckInn RPC...");
-    std::string request = data[RPC_CALLBACK.at("KEYS")[0].c_str()];
-    std::string room = data[RPC_CALLBACK.at("KEYS")[1].c_str()];
 
-    Serial.print(request.c_str());
-    Serial.print(" - ");        
-    Serial.println(room.c_str()); // In dữ liệu ra Serial Monitor 
-}
-
-void wifiTask(void *pvParameters)
+void WiFiTask(void *pvParameters)
 {
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     Serial.println("Connecting to WiFi...");
@@ -68,10 +58,10 @@ void wifiTask(void *pvParameters)
         Serial.print(".");
     }
     Serial.println("Connected to WiFi");
-    xTaskCreate(ScanTask, "ScanTask", 4096, NULL, 1, &ScanTaskHandle); // Tạo task quét thẻ NFC
+    vTaskResume(ServerTaskHandle); // Xóa task server sau khi hoàn thành
     vTaskDelete(WiFiTaskHandle); // Xóa task Wi-Fi sau khi hoàn thành
 }
-void SeverTask(void *pvParameters)
+void ServerTask(void *pvParameters)
 {
     if (!tb.connected())
     {
@@ -96,9 +86,10 @@ void SeverTask(void *pvParameters)
         Serial.println("Subscribe done");
         subscribed = true;
     }
-    vTaskResume(ScanTaskHandle); // Resume the scan task after server task is ready
+    xTaskCreatePinnedToCore(readTask, "ReadTask", 4096, NULL, 1, &readTaskHandle, 1);
+    xTaskCreatePinnedToCore(writeTask, "WriteTask", 4096, NULL, 1, &writeTaskHandle, 0);
+    vTaskDelete(ServerTaskHandle); // Xóa task server sau khi hoàn thành
+    Serial.println("Server task finished");
 }
-
-extern PN532Reader nfcReader; // Khai báo đối tượng PN532Reader
 
 #endif // MAIN_H

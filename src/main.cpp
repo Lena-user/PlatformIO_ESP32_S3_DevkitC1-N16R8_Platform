@@ -1,78 +1,39 @@
-#include <Wire.h>
-#include <Adafruit_PN532.h>
+#include "PN532Reader.h" // Include PN532Reader header for NFC operations
 
 // Chân kết nối PN532 qua I2C
 #define SDA_PIN 14
 #define SCL_PIN 13
 
-// Khởi tạo module NFC
-Adafruit_PN532 nfc(SDA_PIN, SCL_PIN);
+// Create NFC instance
+PN532_NFC nfcReader(SDA_PIN, SCL_PIN);
 
 // FreeRTOS Handles
-TaskHandle_t readTaskHandle;
-TaskHandle_t writeTaskHandle;
 QueueHandle_t writeQueue;
-SemaphoreHandle_t nfcSemaphore; // Mutex to protect NFC access
 
 // Struct để gửi thông tin qua Queue
 typedef struct {
+    uint8_t blockNumber;
     uint8_t data[16];
-    bool needAuth;
+    bool isString;
+    String stringData; // For string writes
 } WriteRequest;
-
-// Biến toàn cục để lưu dữ liệu quét
-volatile bool cardPresent = false;
-uint8_t uid[7] = {0};
-uint8_t uidLength = 0;
-uint8_t blockData[16] = {0};
-uint8_t keyA[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-
-// Hàm xác thực thẻ NFC
-bool authenticateCard() {
-    if (!cardPresent) return false;
-    
-    if (nfc.mifareclassic_AuthenticateBlock(uid, uidLength, 4, 0, keyA)) {
-        Serial.println("✅ Block 4 đã được xác thực.");
-        return true;
-    } else {
-        Serial.println("❌ Xác thực block thất bại.");
-        return false;
-    }
-}
 
 // Hàm đọc thẻ NFC (chạy nền)
 void readTask(void *pvParameters) {
     while (true) {
-        // Lấy quyền truy cập NFC
-        if (xSemaphoreTake(nfcSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
-            Serial.println("Reading NFC...");
-            cardPresent = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
+        // Scan for card
+        if (nfcReader.scanCard()) {
+            Serial.print("[DETECTED] NFC Card found! UID: ");
+            Serial.println(nfcReader.getUidString());
             
-            if (cardPresent) {
-                Serial.print("📌 Thẻ NFC được phát hiện! UID: ");
-                for (uint8_t i = 0; i < uidLength; i++) {
-                    Serial.printf("%02X ", uid[i]);
-                }
-                Serial.println("");
-                
-                if (authenticateCard()) {
-                    if (nfc.mifareclassic_ReadDataBlock(4, blockData)) {
-                        Serial.print("📖 Dữ liệu Block 4: ");
-                        for (int i = 0; i < 16; i++) {
-                            Serial.printf("%c", blockData[i]);
-                        }
-                        Serial.println("");
-                    } else {
-                        Serial.println("❌ Không thể đọc dữ liệu từ block.");
-                    }
-                }
-            } else {
-                // No card detected
-                Serial.println("Không phát hiện thẻ NFC.");
+            if (nfcReader.authenticate(4)) {
+                String blockData = nfcReader.readBlockAsString(4);
+                Serial.print("[DATA] Block 4 content: \"");
+                Serial.print(blockData);
+                Serial.println("\"");
             }
-            
-            // Trả lại quyền truy cập NFC
-            xSemaphoreGive(nfcSemaphore);
+        } else {
+            Serial.println("No NFC card detected.");
         }
         
         vTaskDelay(pdMS_TO_TICKS(1000)); // Đợi 1 giây trước khi quét lại
@@ -85,101 +46,149 @@ void writeTask(void *pvParameters) {
     while (true) {
         // Nhận dữ liệu từ hàng đợi
         if (xQueueReceive(writeQueue, &request, portMAX_DELAY)) {
-            // Lấy quyền truy cập NFC
-            if (xSemaphoreTake(nfcSemaphore, pdMS_TO_TICKS(2000)) == pdTRUE) {
-                Serial.println("Write task has NFC access");
-                
-                // Kiểm tra thẻ và xác thực nếu cần
-                bool writeReady = false;
-                
-                if (cardPresent) {
-                    // Thẻ đã được phát hiện bởi readTask
-                    if (request.needAuth) {
-                        // Cần xác thực lại
-                        writeReady = authenticateCard();
+            Serial.println("Processing write request...");
+            
+            // Scan for card if needed
+            if (!nfcReader.isCardPresent()) {
+                nfcReader.scanCard(1000); // Longer timeout for write operations
+            }
+            
+            if (nfcReader.isCardPresent()) {
+                if (nfcReader.authenticate(request.blockNumber)) {
+                    bool success = false;
+                    
+                    if (request.isString) {
+                        // Write string data
+                        success = nfcReader.writeBlockString(request.blockNumber, request.stringData);
                     } else {
-                        // Đã xác thực trước đó
-                        writeReady = true;
+                        // Write raw data
+                        success = nfcReader.writeBlock(request.blockNumber, request.data);
+                    }
+                    
+                    if (success) {
+                        Serial.printf("✅ Data written to block %d!\n", request.blockNumber);
+                    } else {
+                        Serial.printf("❌ Failed to write to block %d!\n", request.blockNumber);
                     }
                 } else {
-                    // Thử phát hiện thẻ
-                    cardPresent = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
-                    if (cardPresent) {
-                        writeReady = authenticateCard();
-                    } else {
-                        Serial.println("❌ Không tìm thấy thẻ để ghi!");
-                    }
+                    Serial.println("❌ Authentication failed!");
                 }
-                
-                // Ghi dữ liệu nếu xác thực thành công
-                if (writeReady) {
-                    if (nfc.mifareclassic_WriteDataBlock(4, request.data)) {
-                        Serial.println("✅ Dữ liệu đã ghi vào thẻ NFC!");
-                    } else {
-                        Serial.println("❌ Ghi thất bại!");
-                    }
-                }
-                
-                // Trả lại quyền truy cập NFC
-                xSemaphoreGive(nfcSemaphore);
             } else {
-                Serial.println("❌ Không thể truy cập NFC để ghi (timeout)");
+                Serial.println("❌ No card found for writing!");
             }
         }
     }
 }
 
-// Hàm yêu cầu ghi dữ liệu từ Serial Monitor
-void requestWriteFromSerial() {
-    if (Serial.available() > 0) {
-        WriteRequest request;
-        memset(request.data, 0, 16); // Xóa dữ liệu cũ
+void checkInnProcess(const JsonVariantConst &data, JsonDocument &response) 
+{
+    Serial.println("==================================");
+    Serial.println("Processing CheckInn RPC...");
+    
+    // Extract request type and room from JSON
+    std::string request = data[RPC_CALLBACK.at("KEYS")[0].c_str()];
+    std::string room = data[RPC_CALLBACK.at("KEYS")[1].c_str()];
+    
+    Serial.print("Request: ");
+    Serial.print(request.c_str());
+    Serial.print(", Room: ");
+    Serial.println(room.c_str());
+    
+    // Create write request
+    WriteRequest writeReq;
+    writeReq.blockNumber = 4; // Use block 4
+    writeReq.isString = true; // We're writing a string
+    
+    bool processSuccess = false;
+    
+    if (request == "CHECK_IN") {
+        Serial.println("[INFO] Processing CHECK_IN request");
+        writeReq.stringData = String(room.c_str()); // Convert room number to String
         
-        int bytesRead = Serial.readBytes((char*)request.data, 16);
-        
-        // Đặt cờ cần xác thực
-        request.needAuth = true;
-        
-        // Gửi vào Queue
-        if (xQueueSend(writeQueue, &request, pdMS_TO_TICKS(100)) == pdTRUE) {
-            Serial.print("📥 Đã nhận yêu cầu ghi: ");
-            for (int i = 0; i < bytesRead; i++) {
-                Serial.print((char)request.data[i]);
-            }
-            Serial.println();
+        // Send write request to queue
+        if (xQueueSend(writeQueue, &writeReq, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            Serial.print("[SUCCESS] Queued CHECK_IN for room ");
+            Serial.println(room.c_str());
+            processSuccess = true;
         } else {
-            Serial.println("❌ Queue đầy, không thể gửi yêu cầu ghi!");
+            Serial.println("[ERROR] Failed to queue CHECK_IN request (queue full)");
+        }
+    } 
+    else if (request == "CHECK_OUT") {
+        Serial.println("[INFO] Processing CHECK_OUT request");
+        writeReq.stringData = ""; // Empty string for checkout
+        
+        // Send write request to queue
+        if (xQueueSend(writeQueue, &writeReq, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            Serial.println("[SUCCESS] Queued CHECK_OUT request");
+            processSuccess = true;
+        } else {
+            Serial.println("[ERROR] Failed to queue CHECK_OUT request (queue full)");
         }
     }
+    
+    // Prepare response
+    response["success"] = processSuccess;
+    response["request_type"] = request.c_str();
+    response["room"] = room.c_str();
+    
+    if (processSuccess) {
+        response["message"] = request == "CHECK_IN" ? 
+            ("Room " + room + " checked in successfully") : 
+            "Card checked out successfully";
+    } else {
+        response["message"] = "Failed to process request";
+    }
+    
+    // Add card UID to response if available
+    if (nfcReader.isCardPresent()) {
+        response["cardUID"] = nfcReader.getUidString();
+    } else {
+        response["cardUID"] = "No card detected";
+    }
+    
+    Serial.println("==================================");
 }
 
-// Khởi động hệ thống
 void setup() {
     Serial.begin(115200);
-    while (!Serial) delay(10); // Optional: Wait for Serial to be ready
+    while (!Serial) delay(10);
     
     Wire.begin(SDA_PIN, SCL_PIN);
     
-    nfc.begin();
-    uint32_t versiondata = nfc.getFirmwareVersion();
-    if (!versiondata) {
-        Serial.println("Không tìm thấy PN532!");
+    // Initialize NFC reader
+    if (!nfcReader.begin()) {
+        Serial.println("Failed to initialize NFC module!");
         while (1); // Halt
     }
     
-    nfc.SAMConfig();
-    Serial.println("PN532 Ready!");
-    
-    // Khởi tạo mutex và queue
-    nfcSemaphore = xSemaphoreCreateMutex();
+    // Create queue for write operations
     writeQueue = xQueueCreate(5, sizeof(WriteRequest));
     
-    // Tạo task
+    // Create tasks
     xTaskCreatePinnedToCore(readTask, "ReadTask", 4096, NULL, 1, &readTaskHandle, 1);
     xTaskCreatePinnedToCore(writeTask, "WriteTask", 4096, NULL, 1, &writeTaskHandle, 0);
 }
 
 void loop() {
-    requestWriteFromSerial(); // Kiểm tra nếu có yêu cầu ghi từ Serial
-    delay(50); // Giảm delay để phản hồi nhanh hơn
+    // Check for serial input for manual write commands
+    if (Serial.available() > 0) {
+        String input = Serial.readStringUntil('\n');
+        input.trim();
+        
+        // Create write request
+        WriteRequest request;
+        request.blockNumber = 4; // Default to block 4
+        request.isString = true;
+        request.stringData = input;
+        
+        // Send write request
+        if (xQueueSend(writeQueue, &request, pdMS_TO_TICKS(100)) == pdTRUE) {
+            Serial.println("Write request queued from serial input");
+        } else {
+            Serial.println("Failed to queue write request (queue full)");
+        }
+    }
+    
+    delay(50);
 }
