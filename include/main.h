@@ -2,94 +2,77 @@
 #define MAIN_H
 
 #include <Arduino.h>
-#include <string>  // Thư viện string
-#include <sstream> // Thư viện stringstream
+#include <string>
+#include <sstream>
+#include <array>
+#include <ArduinoJson.h>
 
-// Private Include
-#include "config.h"      // Thư viện cấu hình
-#include "Adafruit_PN532.h" // Thư viện NFC PN532
+// FreeRTOS includes
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
 
-// Thư viện liên quan đến kết nối mạng và ThingsBoard
+// Network and ThingsBoard includes
 #include <WiFi.h>
-#include <ThingsBoard.h>         // Thư viện ThingsBoard cho ESP32
-#include <Arduino_MQTT_Client.h> // Thư viện MQTT cho ESP32
-#include <Server_Side_RPC.h>     // Thư viện cho server-side RPC
+#include <ThingsBoard.h>
+#include <Arduino_MQTT_Client.h>
+#include <Server_Side_RPC.h>
 
-// Thư viện FreeRTOS
-#include <array>               // Thư viện array
-#include "freertos/FreeRTOS.h" // Thư viện FreeRTOS
-#include "freertos/task.h"     // Thư viện FreeRTOS task
-#include "freertos/queue.h"    // Thư viện FreeRTOS queue
-#include "freertos/semphr.h"   // Thư viện FreeRTOS semaphore
+// Project includes
+#include "config.h"
+#include "PN532_NFC.h"
+#include "User.h"
+#include "Room.h"
+#include "DoorControl.h"
+#include "RoomManager.h"
 
-// Initialize the WiFi and MQTT client
-WiFiClient wifiClient;
-Arduino_MQTT_Client mqttClient(wifiClient);
-Server_Side_RPC<MAX_RPC_SUBSCRIPTIONS, MAX_RPC_RESPONSE> rpc;
-const std::array<IAPI_Implementation *, 1U> apis = {
-    &rpc};
+// Task stack sizes
+#define SERVER_TASK_STACK_SIZE 8192
+#define WIFI_TASK_STACK_SIZE   4096
+#define NFC_READ_TASK_STACK_SIZE 4096
+#define NFC_WRITE_TASK_STACK_SIZE 4096
 
-// Initialize ThingsBoard instance with the maximum needed buffer size
-ThingsBoard tb(
-    mqttClient,
-    MAX_MESSAGE_RECEIVE_SIZE,
-    MAX_MESSAGE_SEND_SIZE,
-    Default_Max_Stack_Size,
-    apis);
+// Task priorities
+#define SERVER_TASK_PRIORITY 2
+#define WIFI_TASK_PRIORITY 3
+#define NFC_TASK_PRIORITY 1
+
+// Forward declarations of structs
+struct WriteRequest {
+    uint8_t blockNumber;
+    uint8_t data[16];
+    bool isString;
+    String stringData;
+};
+
+// Global variables declaration (use extern)
+extern WiFiClient wifiClient;
+extern Arduino_MQTT_Client mqttClient;
+extern Server_Side_RPC<MAX_RPC_SUBSCRIPTIONS, MAX_RPC_RESPONSE> rpc;
+extern ThingsBoard tb;
+extern PN532_NFC nfcReader;
+
+// Queue and semaphore handles
+extern QueueHandle_t writeQueue;
+extern SemaphoreHandle_t nfcMutex;
 
 // Task handles
-TaskHandle_t ServerTaskHandle = NULL; // Handle cho task server
-TaskHandle_t WiFiTaskHandle = NULL;  // Handle cho task Wi-Fi
-TaskHandle_t readTaskHandle = NULL;  // Handle cho task đọc NFC
-TaskHandle_t writeTaskHandle = NULL; // Handle cho task ghi NFC
+extern TaskHandle_t serverTaskHandle;
+extern TaskHandle_t wifiTaskHandle;
+extern TaskHandle_t readTaskHandle;
+extern TaskHandle_t writeTaskHandle;
 
-void CheckInnProcess(const JsonVariantConst &data, JsonDocument &response);
+// State
+extern bool subscribed;
+
+// Function declarations
+void log(const char* level, const char* component, const char* message);
+bool setupWiFi();
 void readTask(void *pvParameters);
 void writeTask(void *pvParameters);
-
-
-void WiFiTask(void *pvParameters)
-{
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    Serial.println("Connecting to WiFi...");
-    while (WiFi.status() != WL_CONNECTED)
-    {
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        Serial.print(".");
-    }
-    Serial.println("Connected to WiFi");
-    vTaskResume(ServerTaskHandle); // Xóa task server sau khi hoàn thành
-    vTaskDelete(WiFiTaskHandle); // Xóa task Wi-Fi sau khi hoàn thành
-}
-void ServerTask(void *pvParameters)
-{
-    if (!tb.connected())
-    {
-        Serial.println("Reconnecting to ThingsBoard...");
-        while (!tb.connect(THINGSBOARD_SERVER, DEVICE_ACCESS_TOKEN, THINGSBOARD_PORT))
-        {
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-            Serial.println("Failed to reconnect");
-        }
-    }
-    if (!subscribed)
-    {
-        Serial.println("Subscribing for RPC...");
-        const std::array<RPC_Callback, MAX_RPC_SUBSCRIPTIONS> callbacks = {
-            RPC_Callback{RPC_CALLBACK.at("METHODS")[0].c_str(), CheckInnProcess}};
-        if (!rpc.RPC_Subscribe(callbacks.cbegin(), callbacks.cend()))
-        {
-            Serial.println("Failed to subscribe for RPC");
-            return;
-        }
-
-        Serial.println("Subscribe done");
-        subscribed = true;
-    }
-    xTaskCreatePinnedToCore(readTask, "ReadTask", 4096, NULL, 1, &readTaskHandle, 1);
-    xTaskCreatePinnedToCore(writeTask, "WriteTask", 4096, NULL, 1, &writeTaskHandle, 0);
-    vTaskDelete(ServerTaskHandle); // Xóa task server sau khi hoàn thành
-    Serial.println("Server task finished");
-}
+void serverTask(void *pvParameters);
+void wifiTask(void *pvParameters);
+void CheckInnProcess(const JsonVariantConst &data, JsonDocument &response);
 
 #endif // MAIN_H

@@ -1,4 +1,5 @@
 #include "PN532_NFC.h"
+#include "config.h"
 
 // Constructor
 PN532_NFC::PN532_NFC(uint8_t sda, uint8_t scl) {
@@ -6,22 +7,14 @@ PN532_NFC::PN532_NFC(uint8_t sda, uint8_t scl) {
     mutex = xSemaphoreCreateMutex();
     _cardPresent = false;
     
-    // Initialize default key
-    uint8_t defaultKey[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-    memcpy(_keyA, defaultKey, 6);
+    // Set default key
+    memcpy(_keyA, NFCConfig::DEFAULT_KEY, 6);
 }
 
 // Destructor
 PN532_NFC::~PN532_NFC() {
-    if (nfc) {
-        delete nfc;
-        nfc = nullptr;
-    }
-    
-    if (mutex) {
-        vSemaphoreDelete(mutex);
-        mutex = nullptr;
-    }
+    delete nfc;
+    vSemaphoreDelete(mutex);
 }
 
 // Initialize the NFC module
@@ -142,7 +135,9 @@ bool PN532_NFC::writeBlock(uint8_t block, const uint8_t* data) {
         return false;
     }
     
-    bool result = nfc->mifareclassic_WriteDataBlock(block, const_cast<uint8_t*>(data));
+    uint8_t tempData[16];
+    memcpy(tempData, data, 16); // Copy data to a non-const buffer
+    bool result = nfc->mifareclassic_WriteDataBlock(block, tempData);
     
     if (result) {
         Serial.printf("[SUCCESS] Data written to block %d\n", block);
@@ -155,23 +150,29 @@ bool PN532_NFC::writeBlock(uint8_t block, const uint8_t* data) {
 }
 
 // Read block as string
-String PN532_NFC::readBlockAsString(uint8_t block) {
+String PN532_NFC::readBlockAsString(uint8_t blockNumber) {
     uint8_t data[16];
-    String result = "";
+    if (!readBlock(blockNumber, data)) {
+        return "";
+    }
     
-    if (readBlock(block, data)) {
-        // Find length (stop at first null byte)
-        int actualLength = 0;
-        for (actualLength = 0; actualLength < 16; actualLength++) {
-            if (data[actualLength] == 0) break;
-        }
-        
-        if (actualLength > 0) {
-            char tempBuffer[17]; // 16 bytes + null terminator
-            memset(tempBuffer, 0, sizeof(tempBuffer));
-            memcpy(tempBuffer, data, actualLength);
-            result = String(tempBuffer);
-        }
+    // Debug: show hex values of what we're reading
+    Serial.print("HEX dump of block ");
+    Serial.print(blockNumber);
+    Serial.print(": ");
+    for (int i = 0; i < 16; i++) {
+        if (data[i] < 0x10) Serial.print("0"); // Add leading zero for single-digit hex
+        Serial.print(data[i], HEX);
+        Serial.print(" ");
+    }
+    Serial.println();
+    
+    // Convert to string
+    String result = "";
+    for (int i = 0; i < 16; i++) {
+        // Stop at null terminator or non-printable chars
+        if (data[i] == 0 || data[i] < 32) break;
+        result += (char)data[i];
     }
     
     return result;
