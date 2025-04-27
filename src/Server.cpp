@@ -28,7 +28,7 @@ void CheckInnProcess(const JsonVariantConst &data, JsonDocument &response)
         writeReq.stringData = String(room.c_str()); // Convert room number to String
 
         // Send write request to queue
-        if (xQueueSend(writeQueue, &writeReq, pdMS_TO_TICKS(1000)) == pdTRUE)
+        if (xQueueSend(writeQueue, &writeReq, pdMS_TO_TICKS(NFC_WRITE_DELAY)) == pdTRUE)
         {
             Serial.print("[SUCCESS] Queued CHECK_IN for room ");
             Serial.println(room.c_str());
@@ -45,7 +45,7 @@ void CheckInnProcess(const JsonVariantConst &data, JsonDocument &response)
         writeReq.stringData = ""; // Empty string for checkout
 
         // Send write request to queue
-        if (xQueueSend(writeQueue, &writeReq, pdMS_TO_TICKS(1000)) == pdTRUE)
+        if (xQueueSend(writeQueue, &writeReq, pdMS_TO_TICKS(NFC_WRITE_DELAY)) == pdTRUE)
         {
             Serial.println("[SUCCESS] Queued CHECK_OUT request");
             processSuccess = true;

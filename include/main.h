@@ -22,9 +22,6 @@
 // Project includes
 #include "config.h"
 #include "PN532_NFC.h"
-#include "User.h"
-#include "Room.h"
-#include "DoorControl.h"
 #include "RoomManager.h"
 
 // Task stack sizes
@@ -65,6 +62,9 @@ extern TaskHandle_t writeTaskHandle;
 
 // State
 extern bool subscribed;
+
+// Class instances
+extern RoomManager roomManager;
 
 // Function declarations
 void log(const char* level, const char* component, const char* message);

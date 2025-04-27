@@ -20,6 +20,7 @@ constexpr unsigned long SERIAL_BAUD = 115200UL;
 
 // NFC Configuration
 constexpr unsigned int NFC_SCAN_DELAY = 2000;  // 2 seconds between scans
+constexpr unsigned int NFC_WRITE_DELAY = 3000;  // 2 seconds between scans
 struct NFCConfig {
     static const uint8_t DEFAULT_KEY[6]; // Just declare it here
     static constexpr uint8_t DATA_BLOCK = 4;
