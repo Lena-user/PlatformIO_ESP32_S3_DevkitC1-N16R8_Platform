@@ -32,10 +32,11 @@ void CheckInnProcess(const JsonVariantConst &data, JsonDocument &response)
         {
             Serial.print("[SUCCESS] Queued CHECK_IN for room ");
             Serial.println(room.c_str());
-            processSuccess = true;
+            response["status"] = "OK";
         }
         else
         {
+            response["status"] = "ERROR";
             Serial.println("[ERROR] Failed to queue CHECK_IN request (queue full)");
         }
     }
@@ -49,37 +50,14 @@ void CheckInnProcess(const JsonVariantConst &data, JsonDocument &response)
         {
             Serial.println("[SUCCESS] Queued CHECK_OUT request");
             processSuccess = true;
+            response["status"] = "OK";
         }
         else
         {
             Serial.println("[ERROR] Failed to queue CHECK_OUT request (queue full)");
+            response["status"] = "ERROR";
         }
     }
-
-    // Prepare response
-    response["success"] = processSuccess;
-    response["request_type"] = request.c_str();
-    response["room"] = room.c_str();
-
-    if (processSuccess)
-    {
-        response["message"] = request == "CHECK_IN" ? ("Room " + room + " checked in successfully") : "Card checked out successfully";
-    }
-    else
-    {
-        response["message"] = "Failed to process request";
-    }
-
-    // Add card UID to response if available
-    if (nfcReader.isCardPresent())
-    {
-        response["cardUID"] = nfcReader.getUidString();
-    }
-    else
-    {
-        response["cardUID"] = "No card detected";
-    }
-
     Serial.println("==================================");
 }
 
@@ -110,6 +88,9 @@ void serverTask(void *pvParameters)
             Serial.println("Failed to reconnect");
         }
     }
+
+    Serial.println("Connected to ThingsBoard");
+    roomManager.sendInitialStates(); // Send initial states to ThingsBoard
     
     if (!subscribed)
     {

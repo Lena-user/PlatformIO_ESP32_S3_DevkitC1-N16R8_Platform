@@ -58,22 +58,14 @@ void readTask(void *pvParameters)
                 unsigned long currentTime = millis();
 
                 // Only process if it's a new card or the same card after a delay (3 seconds)
-                if (uid != lastUid || (currentTime - lastReadTime > 3000))
+                if (uid != lastUid || (currentTime - lastReadTime > 1000))
                 {
                     lastUid = uid;
                     lastReadTime = currentTime;
                     log("INFO", "NFC", ("Card found! UID: " + uid).c_str());
 
-                    Room *room = roomManager.getRoomForCard(uid);
-
-                    if (room != nullptr)
-                    {
-                        log("INFO", "NFC", ("Room found: " + room->getName()).c_str());
-                        if (roomManager.openRoomDoor(room->getId()))
-                            log("INFO", "System", ("Door for Room " + room->getId() + " opened.").c_str());
-                        else
-                            log("ERROR", "System", ("Failed to open door for Room " + room->getId()).c_str());
-                    }
+                    if (roomManager.checkIn(uid))
+                        log("INFO", "NFC", ("Room found: " + roomManager.getRoomForCard(uid)->getName()).c_str());
                     else
                         log("ERROR", "NFC", "No room found for this card");
 
@@ -99,72 +91,145 @@ void readTask(void *pvParameters)
 void writeTask(void *pvParameters)
 {
     WriteRequest request;
+    const unsigned long CARD_WAIT_TIMEOUT_MS = 20000; // Chờ thẻ tối đa 20 giây
+
     while (true)
     {
-        Serial.println("------------------ NFC Write Task -----------------");
+        // Chờ yêu cầu ghi từ hàng đợi
         if (xQueueReceive(writeQueue, &request, portMAX_DELAY) == pdTRUE)
         {
+            Serial.println("------------------ NFC Write Task Processing -----------------");
             log("INFO", "NFC", "Processing write request");
 
+            // Cố gắng lấy quyền truy cập NFC
             if (xSemaphoreTake(nfcMutex, pdMS_TO_TICKS(NFC_WRITE_DELAY)) == pdTRUE)
             {
-                if (!nfcReader.isCardPresent())
+                bool cardFound = false;
+                unsigned long waitStartTime = millis();
+                String uid = ""; // Lưu UID khi tìm thấy thẻ
+
+                // --- Logic chờ thẻ (sử dụng millis() để chính xác hơn) ---
+                log("INFO", "NFC", "Waiting for card to write...");
+                while (millis() - waitStartTime < CARD_WAIT_TIMEOUT_MS)
                 {
-                    log("INFO", "NFC", "Waiting for card...");
-                    for (int i = 0; i < 10; i++)
+                    if (nfcReader.scanCard(100)) // Quét nhanh trong 100ms
                     {
-                        if (nfcReader.scanCard(500))
-                            break;
-                        Serial.print(".");
+                        uid = nfcReader.getUidString(); // Lấy UID khi tìm thấy
+                        cardFound = true;
+                        log("INFO", "NFC", ("Card detected: " + uid).c_str());
+                        break; // Thoát vòng lặp chờ
                     }
-                    Serial.println();
+                    Serial.print(".");
+                    vTaskDelay(pdMS_TO_TICKS(100)); // Chờ một chút trước khi quét lại
                 }
-                if (nfcReader.isCardPresent())
+                Serial.println(); // Xuống dòng sau khi chờ
+
+                // Nếu tìm thấy thẻ trong thời gian chờ
+                if (cardFound)
                 {
-                    String uid = nfcReader.getUidString();
-                    log("INFO", "NFC", ("Card found: " + uid).c_str());
+                    Room *room = roomManager.getRoomForCard(uid); // Kiểm tra thẻ đã đăng ký chưa
 
-                    Room *room = roomManager.getRoomForCard(uid);
+                    // --- Xử lý dựa trên trạng thái thẻ và loại request ---
 
+                    // Trường hợp 1: Thẻ CHƯA đăng ký (room == nullptr)
                     if (room == nullptr)
                     {
-                        log("ERROR", "NFC", "No room found for this card");
-                        String dataToWrite = "ROOM:" + request.stringData;
-                        log("INFO", "NFC", ("Data to write: \"" + dataToWrite + "\"").c_str());
-                        if (nfcReader.authenticate(request.blockNumber))
+                        // 1a: Nếu request là CHECK_IN (có số phòng) -> Đăng ký
+                        if (!request.stringData.isEmpty())
                         {
-                            bool success = false;
+                            log("INFO", "NFC", "Card not registered. Processing registration...");
+                            String dataToWrite = "ROOM:" + request.stringData;
+                            log("INFO", "NFC", ("Data to write: \"" + dataToWrite + "\"").c_str());
 
-                            if (request.isString)
-                                success = nfcReader.writeBlockString(request.blockNumber, dataToWrite);
-                            else
-                                success = nfcReader.writeBlock(request.blockNumber, request.data);
-
-                            if (success)
+                            if (nfcReader.authenticate(request.blockNumber))
                             {
-                                log("INFO", "NFC", "Write successful");
-                                if (roomManager.registerCard(uid, dataToWrite))
-                                    log("INFO", "System", ("Card " + uid + " registered successfully to Room " + request.stringData).c_str());
+                                bool writeSuccess = false;
+                                if (request.isString)
+                                    writeSuccess = nfcReader.writeBlockString(request.blockNumber, dataToWrite);
                                 else
-                                    log("ERROR", "System", ("Failed to register card " + uid + " with RoomManager after writing.").c_str());
+                                    writeSuccess = nfcReader.writeBlock(request.blockNumber, request.data); // Giữ lại nếu cần ghi byte thô
+
+                                if (writeSuccess)
+                                {
+                                    log("INFO", "NFC", "Write successful");
+                                    // Đăng ký với RoomManager
+                                    if (roomManager.registerCard(uid, dataToWrite))
+                                        log("INFO", "System", ("Card " + uid + " registered successfully to Room " + request.stringData).c_str());
+                                    else
+                                        log("ERROR", "System", ("Failed to register card " + uid + " with RoomManager after writing.").c_str());
+                                }
+                                else
+                                    log("ERROR", "NFC", "Write failed during registration");
                             }
                             else
-                                log("ERROR", "NFC", "Write failed");
+                                log("ERROR", "NFC", "Authentication failed for writing");
                         }
+                        // 1b: Nếu request là CHECK_OUT (stringData rỗng) cho thẻ chưa đăng ký -> Bỏ qua
                         else
-                            log("ERROR", "NFC", "Authentication failed");
+                        {
+                            log("WARN", "NFC", "Cannot perform CHECK_OUT. Card not registered.");
+                        }
                     }
+                    // Trường hợp 2: Thẻ ĐÃ đăng ký (room != nullptr)
                     else
                     {
-                        log("ERROR", "NFC", ("Card already registered to Room " + room->getName()).c_str());
+                        // 2a: Nếu request là CHECK_OUT (stringData rỗng) -> Thực hiện check-out
+                        if (request.stringData == "")
+                        {
+                            log("INFO", "NFC", ("Card registered to Room " + room->getId() + ". Processing CHECK_OUT...").c_str());
+                            // Xác thực trước khi xóa dữ liệu thẻ
+                            if (nfcReader.authenticate(request.blockNumber))
+                            {
+                                // Ghi chuỗi rỗng để xóa dữ liệu
+                                bool writeSuccess = nfcReader.writeBlockString(request.blockNumber, "");
+                                if (writeSuccess)
+                                {
+                                    log("INFO", "NFC", "Card data cleared successfully.");
+                                    // Gọi RoomManager để hoàn tất check-out
+                                    if (roomManager.checkOut(uid))
+                                    {
+                                        log("INFO", "System", ("Card " + uid + " checked out successfully from Room " + room->getId()).c_str());
+                                        // Giả định roomManager.checkOut() đã gửi cập nhật lên server
+                                    }
+                                    else
+                                    {
+                                        log("ERROR", "System", ("Failed to update RoomManager state for check out of card " + uid).c_str());
+                                    }
+                                }
+                                else
+                                {
+                                    log("ERROR", "NFC", "Failed to clear card data during check out.");
+                                }
+                            }
+                            else
+                            {
+                                log("ERROR", "NFC", "Authentication failed for clearing card data.");
+                            }
+                        }
+                        // 2b: Nếu request là CHECK_IN (stringData không rỗng) cho thẻ đã đăng ký -> Bỏ qua
+                        else
+                        {
+                            log("WARN", "NFC", ("Card already registered to Room " + room->getId() + ". CHECK_IN request ignored for writing.").c_str());
+                            // Không cần ghi lại hay đăng ký lại
+                        }
                     }
                 }
-                else
-                    log("ERROR", "NFC", "No card present for writing");
+                else // Hết thời gian chờ mà không thấy thẻ
+                {
+                    log("ERROR", "NFC", "Timeout waiting for card to write");
+                }
+
+                // Luôn nhả mutex sau khi xử lý xong
                 xSemaphoreGive(nfcMutex);
             }
+            else // Không lấy được mutex
+            {
+                log("ERROR", "NFC", "Could not obtain NFC mutex for writing");
+                // Cân nhắc: Gửi lại request vào queue hoặc báo lỗi về server?
+            }
+            Serial.println("------------------ NFC Write Task Finished -----------------");
         }
-        Serial.println("------------------ NFC Write Task -----------------");
+        // Không cần delay ở đây vì task bị block bởi xQueueReceive
     }
 }
 
