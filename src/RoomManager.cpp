@@ -9,6 +9,7 @@ RoomManager::RoomManager(ThingsBoard &tb_ref) : _tb(tb_ref)
     addRoom("3", "Room 103");
     addRoom("4", "Room 104");
     // Việc gửi trạng thái ban đầu sẽ gọi hàm sendInitialStates() từ bên ngoài
+
 }
 
 // --- HÀM HELPER GỬI DỮ LIỆU ---
@@ -136,6 +137,7 @@ void RoomManager::sendInitialStates()
         Serial.println("RoomManager: Cannot send initial states, ThingsBoard not connected.");
         return;
     }
+    loadStateFromFlash(); // Gọi hàm load ở đây
     Serial.println("RoomManager: Sending initial states to ThingsBoard...");
     for (const auto &door : _doorControls)
     {
@@ -190,6 +192,11 @@ bool RoomManager::registerCard(const String &uid, const String &blockData)
 
     _cardRoomMap[uid] = roomId;
     Serial.println("RoomManager::registerCard SUCCESS - Card " + uid + " registered to room " + roomId);
+    
+    Serial.println("RoomManager::registerCard - Attempting to save state to flash...");
+    saveStateToFlash();
+    Serial.println("RoomManager::registerCard - State after saving:");
+    printAllRoomsStatus(); // In trạng thái sau khi lưu
     return true;
 }
 
@@ -233,8 +240,13 @@ bool RoomManager::checkIn(const String &uid)
     if (success)
     {
         Serial.println("RoomManager::checkIn - Checked in to room " + room->getId());
-        sendRoomStatusUpdate(room->getId(), true); // Gửi trạng thái phòng
-        openRoomDoor(room->getId());               // Mở cửa và gửi trạng thái cửa
+        sendRoomStatusUpdate(room->getId(), true);
+        openRoomDoor(room->getId());
+        
+        Serial.println("RoomManager::checkIn - Attempting to save state to flash...");
+        saveStateToFlash();
+        Serial.println("RoomManager::checkIn - State after saving:");
+        printAllRoomsStatus(); // In trạng thái sau khi lưu
     }
     else
     {
@@ -260,8 +272,8 @@ bool RoomManager::checkOut(const String &uid)
     if (success)
     {
         Serial.println("RoomManager::checkOut - Checked out from room " + roomId);
-        sendRoomStatusUpdate(roomId, false); // Gửi trạng thái phòng
-        lockRoomDoor(roomId);                // Khóa cửa và gửi trạng thái cửa
+        sendRoomStatusUpdate(roomId, false);
+        lockRoomDoor(roomId);
 
         // Xóa khỏi map
         auto it = _cardRoomMap.find(uid);
@@ -269,6 +281,11 @@ bool RoomManager::checkOut(const String &uid)
             _cardRoomMap.erase(it);
             Serial.println("RoomManager::checkOut - Removed card " + uid + " from registration map.");
         }
+        
+        Serial.println("RoomManager::checkOut - Attempting to save state to flash...");
+        saveStateToFlash();
+        Serial.println("RoomManager::checkOut - State after saving:");
+        printAllRoomsStatus(); // In trạng thái sau khi lưu
     }
     else
     {
@@ -347,4 +364,89 @@ void RoomManager::printAllRoomsStatus()
         }
      }
     Serial.println("==========================");
+}
+
+void RoomManager::saveStateToFlash() {
+    if (!preferences.begin("room_manager", false)) { // false: read/write mode
+        Serial.println("RoomManager: ERROR - Could not begin preferences for writing.");
+        return;
+    }
+    preferences.clear(); // Xóa hết key cũ trong namespace này để đảm bảo sạch sẽ
+
+    // --- Save _cardRoomMap ---
+    DynamicJsonDocument jsonMap(1024); // Tăng kích thước nếu map lớn
+    JsonObject mapObject = jsonMap.to<JsonObject>();
+    for (const auto& pair : _cardRoomMap) {
+        mapObject[pair.first] = pair.second;
+    }
+    String serializedMap;
+    serializeJson(jsonMap, serializedMap);
+    preferences.putString("cardRoomMap", serializedMap);
+    Serial.println("RoomManager: Saved cardRoomMap to flash: " + serializedMap);
+
+    // --- Save individual room states ---
+    for (const auto& room : _rooms) { // room ở đây là một Room object (hoặc const Room&)
+        String prefix = "room_" + room.getId() + "_"; // Sửa room-> thành room.
+        preferences.putBool((prefix + "occupied").c_str(), room.isOccupied()); // Sửa room-> thành room.
+        preferences.putString((prefix + "uid").c_str(), room.getOccupantUid()); // Sửa room-> thành room.
+        // preferences.putULong((prefix + "chkTime").c_str(), room.getCheckInTime()); // Sửa room-> thành room. (Nếu cần)
+        Serial.printf("RoomManager: Saved state for Room %s: Occupied=%d, UID=%s\n",
+                      room.getId().c_str(), room.isOccupied(), room.getOccupantUid().c_str()); // Sửa room-> thành room.
+    }
+
+    preferences.end();
+    Serial.println("RoomManager: All states saved to flash.");
+}
+
+void RoomManager::loadStateFromFlash() {
+    if (!preferences.begin("room_manager", true)) { // true: read-only mode
+        Serial.println("RoomManager: Preferences not found or error, using default state.");
+        // Nếu không mở được ở read-only (có thể là lần đầu chạy), thử mở ở read/write để tạo namespace
+        if (!preferences.begin("room_manager", false)) {
+             Serial.println("RoomManager: ERROR - Could not begin preferences even for writing.");
+             return;
+        }
+        preferences.end(); // Đóng lại ngay nếu chỉ để tạo
+        return; // Không có gì để load
+    }
+
+    Serial.println("RoomManager: Attempting to load state from flash...");
+
+    // --- Load _cardRoomMap ---
+    String serializedMap = preferences.getString("cardRoomMap", "");
+    if (!serializedMap.isEmpty()) {
+        DynamicJsonDocument jsonMap(1024);
+        DeserializationError error = deserializeJson(jsonMap, serializedMap);
+        if (!error) {
+            _cardRoomMap.clear(); // Xóa map hiện tại
+            JsonObject mapObject = jsonMap.as<JsonObject>();
+            for (JsonPair kv : mapObject) {
+                _cardRoomMap[String(kv.key().c_str())] = kv.value().as<String>();
+            }
+            Serial.println("RoomManager: Loaded cardRoomMap from flash: " + serializedMap);
+        } else {
+            Serial.printf("RoomManager: Failed to deserialize cardRoomMap: %s\n", error.c_str());
+        }
+    } else {
+        Serial.println("RoomManager: No cardRoomMap found in flash.");
+    }
+
+    // --- Load individual room states ---
+    for (auto& room_ptr : _rooms) { // room_ptr ở đây là một tham chiếu đến Room object
+        String prefix = "room_" + room_ptr.getId() + "_"; // Sửa room_ptr-> thành room_ptr.
+        bool occupied = preferences.getBool((prefix + "occupied").c_str(), false);
+        String uid = preferences.getString((prefix + "uid").c_str(), "");
+        // unsigned long checkInTime = preferences.getULong((prefix + "chkTime").c_str(), 0); // Nếu cần
+
+        room_ptr.restoreState(occupied, uid, 0 /*checkInTime*/); // Sửa room_ptr-> thành room_ptr.
+        if(occupied) {
+            Serial.printf("RoomManager: Loaded state for Room %s: Occupied, UID=%s\n",
+                          room_ptr.getId().c_str(), uid.c_str()); // Sửa room_ptr-> thành room_ptr.
+        } else {
+            Serial.printf("RoomManager: Loaded state for Room %s: Available\n", room_ptr.getId().c_str()); // Sửa room_ptr-> thành room_ptr.
+        }
+    }
+    preferences.end();
+    Serial.println("RoomManager: State loading finished.");
+    printAllRoomsStatus(); // In ra để kiểm tra
 }

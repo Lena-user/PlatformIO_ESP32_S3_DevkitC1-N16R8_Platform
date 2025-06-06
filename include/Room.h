@@ -32,6 +32,9 @@ public:
 
     // Print room information (khai báo)
     void printInfo() const;
+
+    // Restore room state (khai báo)
+    void restoreState(bool occupied, const String& occupantUid, unsigned long checkInTime);
 };
 
 #endif // ROOM_H

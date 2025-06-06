@@ -7,6 +7,7 @@
 #include <ThingsBoard.h>
 #include "Room.h"
 #include "DoorControl.h"
+#include <Preferences.h> // Thêm dòng này
 
 // Khai báo các mảng key (định nghĩa trong globals.cpp)
 extern const char *DOOR_KEYS[];
@@ -19,6 +20,7 @@ private:
     std::vector<Room> _rooms;
     std::map<String, String> _cardRoomMap;  // UID -> RoomID mapping
     std::vector<DoorControl> _doorControls;
+    Preferences preferences; // Thêm đối tượng preferences
 
     // --- HÀM HELPER GỬI DỮ LIỆU (khai báo) ---
     void sendDoorStatusUpdate(uint8_t roomNumber, bool isOpen);
@@ -57,6 +59,9 @@ public:
 
     // Print status (khai báo)
     void printAllRoomsStatus();
+
+    void saveStateToFlash();
+    void loadStateFromFlash();
 };
 
 #endif // ROOM_MANAGER_H

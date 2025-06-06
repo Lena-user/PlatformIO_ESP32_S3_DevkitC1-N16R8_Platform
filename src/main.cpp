@@ -241,6 +241,9 @@ void setup()
 
     // Initialize I2C
     Wire.begin(SDA_PIN, SCL_PIN);
+    while(!Serial) {
+        ; // Wait for serial port to connect. Needed for native USB port only
+    }
 
     // Initialize NFC reader
     if (!nfcReader.begin())

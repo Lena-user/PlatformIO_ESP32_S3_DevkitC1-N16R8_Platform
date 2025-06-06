@@ -68,3 +68,9 @@ void Room::printInfo() const {
     }
     Serial.println("=========================");
 }
+
+void Room::restoreState(bool occupied, const String& occupantUid, unsigned long checkInTime) {
+    _isOccupied = occupied;
+    _occupantUid = occupantUid;
+    _checkInTime = checkInTime; // Nếu bạn lưu và muốn khôi phục checkInTime
+}

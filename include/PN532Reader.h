@@ -4,7 +4,7 @@
  * for MIFARE Classic card operations
  */
 
- #include "main.h" // Include main header for configuration and dependencies
+#include "main.h" // Include main header for configuration and dependencies
 
 class PN532_NFC {
     private:

@@ -5,9 +5,6 @@
 #include <vector>
 #include <string>
 
-// Include secrets file with credentials
-#include "secrets.h"
-
 // Version information
 constexpr char FIRMWARE_VERSION[] = "1.0.0";
 
