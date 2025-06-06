@@ -292,11 +292,5 @@ void setup()
 // Main loop
 void loop()
 {
-    if (tb.connected())
-    {
-        tb.loop(); // Call ThingsBoard loop to process incoming messages
-    }
-    roomManager.update(); // Update room manager state
-    // Just a small delay
-    delay(100); // This should be small enough to detect the 5-second timeout
+
 }

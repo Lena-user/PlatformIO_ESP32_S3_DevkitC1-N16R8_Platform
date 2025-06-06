@@ -76,43 +76,82 @@ void wifiTask(void *pvParameters)
     vTaskDelete(wifiTaskHandle);   // Delete WiFi task after completion
 }
 
-// Server task function
+// Server task function - MODIFIED TO RUN CONTINUOUSLY
 void serverTask(void *pvParameters)
 {
-    if (!tb.connected())
-    {
-        Serial.println("Reconnecting to ThingsBoard...");
-        while (!tb.connect(THINGSBOARD_SERVER, DEVICE_ACCESS_TOKEN, THINGSBOARD_PORT))
-        {
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-            Serial.println("Failed to reconnect");
-        }
-    }
+    log("INFO", "Server", "Task started, waiting for WiFi to connect...");
+    // ServerTask thường được resume bởi WiFiTask, nên không cần đợi WiFi ở đây nữa.
 
-    Serial.println("Connected to ThingsBoard");
-    roomManager.sendInitialStates(); // Send initial states to ThingsBoard
-    
-    if (!subscribed)
+    bool tasks_created = false; // Cờ để đảm bảo task con chỉ tạo 1 lần
+
+    while (true) // Vòng lặp chính của ServerTask
     {
-        Serial.println("Subscribing for RPC...");
-        const std::array<RPC_Callback, MAX_RPC_SUBSCRIPTIONS> callbacks = {
-            RPC_Callback{RPC_CALLBACK.at("METHODS")[0].c_str(), CheckInnProcess}};
-        
-        if (!rpc.RPC_Subscribe(callbacks.cbegin(), callbacks.cend()))
+        // 1. Kiểm tra và kết nối ThingsBoard nếu cần
+        if (!tb.connected())
         {
-            Serial.println("Failed to subscribe for RPC");
-            return;
+            log("INFO", "Server", "ThingsBoard disconnected. Attempting to reconnect...");
+            // Vòng lặp thử kết nối lại
+            while (!tb.connect(THINGSBOARD_SERVER, DEVICE_ACCESS_TOKEN, THINGSBOARD_PORT))
+            {
+                log("ERROR", "Server", "Failed to reconnect to ThingsBoard. Retrying in 5s...");
+                vTaskDelay(pdMS_TO_TICKS(5000)); // Đợi 5 giây trước khi thử lại
+            }
+            // Sau khi kết nối lại thành công
+            log("INFO", "Server", "Reconnected to ThingsBoard successfully!");
+            roomManager.sendInitialStates(); // Gửi lại trạng thái ban đầu
+            subscribed = false; // Đặt lại cờ để subscribe lại RPC
         }
 
-        Serial.println("Subscribe done");
-        subscribed = true;
+        // 2. Nếu đã kết nối, thực hiện các hoạt động cần thiết
+        if (tb.connected())
+        {
+            // Đăng ký RPC nếu chưa làm hoặc sau khi kết nối lại
+            if (!subscribed)
+            {
+                log("INFO", "Server", "Subscribing for RPC...");
+                const std::array<RPC_Callback, MAX_RPC_SUBSCRIPTIONS> callbacks = {
+                    RPC_Callback{RPC_CALLBACK.at("METHODS")[0].c_str(), CheckInnProcess}};
+
+                if (!rpc.RPC_Subscribe(callbacks.cbegin(), callbacks.cend())) // Giả sử rpc là đối tượng toàn cục hoặc có thể truy cập
+                {
+                    log("ERROR", "Server", "Failed to subscribe for RPC");
+                    // Có thể thêm logic thử lại subscribe ở đây nếu cần
+                }
+                else
+                {
+                    log("INFO", "Server", "RPC Subscribe done.");
+                    subscribed = true;
+                }
+            }
+
+            // Tạo các task đọc/ghi NFC chỉ một lần và khi đã kết nối + subscribe
+            if (!tasks_created && subscribed)
+            {
+                log("INFO", "Server", "Creating NFC Read/Write tasks...");
+                if (readTaskHandle == NULL) { // Kiểm tra để tránh tạo lại nếu đã có
+                    xTaskCreatePinnedToCore(readTask, "ReadTask", NFC_READ_TASK_STACK_SIZE, NULL, NFC_TASK_PRIORITY, &readTaskHandle, 1);
+                }
+                if (writeTaskHandle == NULL) { // Kiểm tra để tránh tạo lại nếu đã có
+                    xTaskCreatePinnedToCore(writeTask, "WriteTask", NFC_WRITE_TASK_STACK_SIZE, NULL, NFC_TASK_PRIORITY, &writeTaskHandle, 0);
+                }
+                if(readTaskHandle != NULL && writeTaskHandle != NULL) {
+                    tasks_created = true;
+                    log("INFO", "Server", "NFC Read/Write tasks created.");
+                } else {
+                    log("ERROR", "Server", "Failed to create one or more NFC tasks.");
+                }
+            }
+
+            // --- TÍCH HỢP LOGIC TỪ LOOP() VÀO ĐÂY ---
+            tb.loop();            // Gọi ThingsBoard loop để xử lý message đến/đi
+            roomManager.update(); // Cập nhật trạng thái room manager
+            // --- KẾT THÚC PHẦN TÍCH HỢP ---
+
+        } // Kết thúc khối if (tb.connected())
+
+        // Delay để nhường CPU và định tần suất hoạt động
+        // Tần suất này sẽ ảnh hưởng đến việc tb.loop() và roomManager.update() được gọi
+        vTaskDelay(pdMS_TO_TICKS(100)); // Ví dụ: chạy mỗi 100ms
     }
-    
-    // Create read and write tasks
-    xTaskCreatePinnedToCore(readTask, "ReadTask", NFC_READ_TASK_STACK_SIZE, NULL, NFC_TASK_PRIORITY, &readTaskHandle, 1);
-    xTaskCreatePinnedToCore(writeTask, "WriteTask", NFC_WRITE_TASK_STACK_SIZE, NULL, NFC_TASK_PRIORITY, &writeTaskHandle, 0);
-    
-    // Delete server task after completion
-    vTaskDelete(serverTaskHandle);
-    Serial.println("Server task finished");
+    // Dòng vTaskDelete(serverTaskHandle); sẽ không bao giờ được đạt tới trong cấu trúc này
 }
